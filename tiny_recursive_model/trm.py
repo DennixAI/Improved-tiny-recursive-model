@@ -91,15 +91,15 @@ class TinyRecursiveModel(Module):
             combined = outputs.add(latents).add(inputs)
             normed_combined = self.latent_norm(combined)
             
-            # --- RESTORED 0.1 SCALING (Safety) ---
-            latents = latents + 0.1 * self.network(normed_combined)
+            # --- FIX: NO SCALING (Full Signal) ---
+            latents = latents + self.network(normed_combined)
 
         # Output refinement
         combined_out = outputs.add(latents)
         normed_combined_out = self.output_norm(combined_out)
         
-        # --- RESTORED 0.1 SCALING (Safety) ---
-        outputs = outputs + 0.1 * self.network(normed_combined_out)
+        # --- FIX: NO SCALING (Full Signal) ---
+        outputs = outputs + self.network(normed_combined_out)
 
         return outputs, latents
 
