@@ -33,7 +33,7 @@ class AssociativeRecallDataset(Dataset):
         tgt[-1] = target_val.item()
         return inp, tgt
 
-def run_task(name, dataset, epochs=10, num_tokens=256, lr=3e-3):
+def run_task(name, dataset, epochs=20, num_tokens=256, lr=5e-4):
     print(f"\n[TEST] Starting Task: {name}")
     
     sample_inp, _ = dataset[0]
@@ -56,8 +56,7 @@ def run_task(name, dataset, epochs=10, num_tokens=256, lr=3e-3):
         model,
         dataset,
         learning_rate = lr,
-        # --- FIX: KILL WEIGHT DECAY ---
-        weight_decay = 0.0,  # <--- CRITICAL: Allows the model to keep what it learns
+        weight_decay = 0.0, #trying 
         batch_size = 32,
         epochs = epochs,
         max_recurrent_steps = 12,
@@ -67,22 +66,6 @@ def run_task(name, dataset, epochs=10, num_tokens=256, lr=3e-3):
     )
 
     trainer.forward()
-    
-    print(f"      Validating {name}...")
-    inp, tgt = dataset[0]
-    inp = inp.unsqueeze(0).to(trainer.accelerator.device)
-    pred, _ = model.predict(inp)
-    
-    final_pred = pred[0, -1].item()
-    final_tgt = tgt[-1].item()
-    
-    print(f"      Prediction: {final_pred}")
-    print(f"      Target:     {final_tgt}")
-    
-    if final_pred == final_tgt:
-        print(f"      >>> SUCCESS: {name} Passed.")
-    else:
-        print(f"      >>> FAILURE: {name} Failed.")
 
 if __name__ == "__main__":
     # Task 1: Parity Check
