@@ -1,4 +1,4 @@
-# 🚀 TRM-Optimized: "Gemini 3" Reasoning Analysis Stack
+# 🚀 TRM-Optimized: Reasoning Analysis Stack
 
 This repository is a heavily optimized fork of the [Tiny Recursive Model (TRM)](https://github.com/lucidrains/tiny-recursive-model). It has been re-engineered to analyze high-level reasoning capabilities by fixing critical gradient flow issues ("Broken BPTT") and maximizing hardware throughput via kernel fusion.
 
