@@ -33,7 +33,7 @@ class AssociativeRecallDataset(Dataset):
         tgt[-1] = target_val.item()
         return inp, tgt
 
-def run_task(name, dataset, epochs=20, num_tokens=256, lr=5e-4):
+def run_task(name, dataset, epochs=15, num_tokens=256, lr=1e-3):
     print(f"\n[TEST] Starting Task: {name}")
     
     sample_inp, _ = dataset[0]
@@ -56,21 +56,42 @@ def run_task(name, dataset, epochs=20, num_tokens=256, lr=5e-4):
         model,
         dataset,
         learning_rate = lr,
-        weight_decay = 0.0, #trying 
+        weight_decay = 0.0, # Keep memory
         batch_size = 32,
         epochs = epochs,
         max_recurrent_steps = 12,
         warmup_steps = 10,
-        compile_model = True,
+        
+        # --- FIX: DISABLE COMPILE & EMA (Visibility) ---
+        compile_model = False,  # Turn off to prevent silent inference crashes
+        ema_decay_rate = 0.0,   # Disable EMA to simplify training logic
+        # -----------------------------------------------
+        
         cpu = not torch.cuda.is_available()
     )
 
     trainer.forward()
+    
+    print(f"      Validating {name}...")
+    inp, tgt = dataset[0]
+    inp = inp.unsqueeze(0).to(trainer.accelerator.device)
+    pred, _ = model.predict(inp)
+    
+    final_pred = pred[0, -1].item()
+    final_tgt = tgt[-1].item()
+    
+    print(f"      Prediction: {final_pred}")
+    print(f"      Target:     {final_tgt}")
+    
+    if final_pred == final_tgt:
+        print(f"      >>> SUCCESS: {name} Passed.")
+    else:
+        print(f"      >>> FAILURE: {name} Failed.")
+
 
 if __name__ == "__main__":
     # Task 1: Parity Check
-    # LR 1e-3 + Learnable Scale + No Decay
-    run_task("Parity Check", ParityDataset(samples=3000, seq_len=16), epochs=10, num_tokens=2, lr=5e-4) #lowering lr
-    
+    run_task("Parity Check", ParityDataset(samples=3000, seq_len=16), epochs=15, num_tokens=2, lr=1e-3)
+
     # Task 2: Associative Recall
-    run_task("Associative Recall", AssociativeRecallDataset(samples=2000, seq_len=32), epochs=20, num_tokens=256, lr=5e-4) # loweing lr
+    run_task("Associative Recall", AssociativeRecallDataset(samples=2000, seq_len=32), epochs=15, num_tokens=256, lr=1e-3)

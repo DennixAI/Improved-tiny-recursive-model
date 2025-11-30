@@ -8,8 +8,6 @@ from torch.nn import Module
 
 from einops import rearrange, repeat, reduce, pack, unpack
 
-# helpers
-
 def exists(v):
     return v is not None
 
@@ -21,8 +19,6 @@ def is_empty(t):
 
 def range_from_one(n):
     return range(1, n + 1)
-
-# classes
 
 class TinyRecursiveModel(Module):
     def __init__(
@@ -51,10 +47,11 @@ class TinyRecursiveModel(Module):
         self.latent_norm = nn.LayerNorm(dim)
         self.output_norm = nn.LayerNorm(dim)
 
-        # --- FIX: LEARNABLE SCALING (LayerScale) ---
-        # Initialize at 0.1 (Stable), but let the model learn to change it.
-        self.latent_scale = nn.Parameter(torch.ones(dim) * 0.1)
-        self.output_scale = nn.Parameter(torch.ones(dim) * 0.1)
+        # --- FIX: GATING MECHANISM ---
+        # Learnable gates that decide (0 to 1) whether to keep memory or update it.
+        # This allows Parity (Update) and Recall (Keep) to coexist.
+        self.latent_gate = nn.Linear(dim, dim)
+        self.output_gate = nn.Linear(dim, dim)
 
         self.num_latent_refinements = num_latent_refinements
         self.num_refinement_blocks = num_refinement_blocks
@@ -94,16 +91,22 @@ class TinyRecursiveModel(Module):
             combined = outputs.add(latents).add(inputs)
             normed_combined = self.latent_norm(combined)
             
-            # --- FIX: USE LEARNABLE SCALE ---
-            # latents = latents + (Learnable_Gamma * Network(x))
-            latents = latents + self.latent_scale * self.network(normed_combined)
+            # --- FIX: GATED UPDATE ---
+            # 1. Calculate Candidate Update
+            update = self.network(normed_combined)
+            # 2. Calculate Gate (0 = Locked, 1 = Open)
+            gate = torch.sigmoid(self.latent_gate(normed_combined))
+            # 3. Smoothly Blend
+            latents = (1. - gate) * latents + gate * update
 
         # Output refinement
         combined_out = outputs.add(latents)
         normed_combined_out = self.output_norm(combined_out)
         
-        # --- FIX: USE LEARNABLE SCALE ---
-        outputs = outputs + self.output_scale * self.network(normed_combined_out)
+        # --- FIX: GATED UPDATE ---
+        out_update = self.network(normed_combined_out)
+        out_gate = torch.sigmoid(self.output_gate(normed_combined_out))
+        outputs = (1. - out_gate) * outputs + out_gate * out_update
 
         return outputs, latents
 
