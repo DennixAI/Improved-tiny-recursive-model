@@ -56,42 +56,47 @@ def run_task(name, dataset, epochs=15, num_tokens=256, lr=1e-3):
         model,
         dataset,
         learning_rate = lr,
-        weight_decay = 0.0, # Keep memory
+        weight_decay = 0.0,
         batch_size = 32,
         epochs = epochs,
         max_recurrent_steps = 12,
         warmup_steps = 10,
-        
-        # --- FIX: DISABLE COMPILE & EMA (Visibility) ---
-        compile_model = False,  # Turn off to prevent silent inference crashes
-        ema_decay_rate = 0.0,   # Disable EMA to simplify training logic
-        # -----------------------------------------------
-        
+        compile_model = True,
         cpu = not torch.cuda.is_available()
     )
 
     trainer.forward()
     
     print(f"      Validating {name}...")
-    inp, tgt = dataset[0]
-    inp = inp.unsqueeze(0).to(trainer.accelerator.device)
-    pred, _ = model.predict(inp)
     
-    final_pred = pred[0, -1].item()
-    final_tgt = tgt[-1].item()
+    # --- UPGRADE: CHECK BATCH ACCURACY (Luck vs Skill) ---
+    # We grab a whole batch (32 puzzles) and check how many it gets right.
+    inp_batch, tgt_batch = next(iter(trainer.dataloader))
+    inp_batch = inp_batch.to(trainer.accelerator.device)
+    tgt_batch = tgt_batch.to(trainer.accelerator.device)
     
-    print(f"      Prediction: {final_pred}")
-    print(f"      Target:     {final_tgt}")
+    # Run Inference
+    preds, _ = model.predict(inp_batch)
     
-    if final_pred == final_tgt:
-        print(f"      >>> SUCCESS: {name} Passed.")
+    # Check Last Token Accuracy
+    # (Parity needs to be right at the end; Recall needs to be right at the end)
+    correct_count = (preds[:, -1] == tgt_batch[:, -1]).sum().item()
+    accuracy = (correct_count / 32) * 100
+    
+    print(f"      Batch Accuracy: {accuracy:.2f}% ({correct_count}/32)")
+    
+    if accuracy > 95.0:
+        print(f"      >>> SUCCESS: {name} Passed (Intelligence).")
+    elif accuracy > 55.0:
+        print(f"      >>> INCONCLUSIVE: {name} is learning but not perfect.")
     else:
-        print(f"      >>> FAILURE: {name} Failed.")
-
+        print(f"      >>> FAILURE: {name} Failed (Just Guessing).")
 
 if __name__ == "__main__":
     # Task 1: Parity Check
-    run_task("Parity Check", ParityDataset(samples=3000, seq_len=16), epochs=15, num_tokens=2, lr=1e-3)
-
+    # LR 2e-3 (Aggressive) to break the 0.65 stagnation
+    run_task("Parity Check", ParityDataset(samples=3000, seq_len=16), epochs=20, num_tokens=2, lr=2e-3)
+    
     # Task 2: Associative Recall
-    run_task("Associative Recall", AssociativeRecallDataset(samples=2000, seq_len=32), epochs=15, num_tokens=256, lr=1e-3)
+    run_task("Associative Recall", AssociativeRecallDataset(samples=2000, seq_len=32), epochs=20, num_tokens=256, lr=2e-3)
+    

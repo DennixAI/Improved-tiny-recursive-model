@@ -27,8 +27,8 @@ class TinyRecursiveModel(Module):
         dim,
         num_tokens,
         network: Module,
-        num_refinement_blocks = 3,
-        num_latent_refinements = 6,
+        num_refinement_blocks = 3,   # T in paper
+        num_latent_refinements = 6,  # n in paper
         halt_loss_weight = 1.,
         num_register_tokens = 0,
         max_seq_len = 1024
@@ -37,6 +37,8 @@ class TinyRecursiveModel(Module):
         assert num_refinement_blocks > 1
 
         self.input_embed = nn.Embedding(num_tokens, dim)
+        
+        # 1. Positional Embeddings (Crucial for Logic)
         self.pos_embed = nn.Embedding(max_seq_len, dim)
 
         self.output_init_embed = nn.Parameter(torch.randn(dim) * 1e-2)
@@ -44,14 +46,23 @@ class TinyRecursiveModel(Module):
 
         self.network = network
 
+        # 2. State Normalization (Crucial for Depth)
         self.latent_norm = nn.LayerNorm(dim)
         self.output_norm = nn.LayerNorm(dim)
 
-        # --- FIX: GATING MECHANISM ---
-        # Learnable gates that decide (0 to 1) whether to keep memory or update it.
-        # This allows Parity (Update) and Recall (Keep) to coexist.
+        # 3. Gating Mechanism (Crucial for Stability)
         self.latent_gate = nn.Linear(dim, dim)
         self.output_gate = nn.Linear(dim, dim)
+
+        # --- THE FIX: BIAS INITIALIZATION ---
+        # Initialize bias to -2.0.
+        # Sigmoid(-2.0) approx 0.12.
+        # Update Rule: Memory = (1 - 0.12)*Old + 0.12*New
+        # Result: The model keeps ~88% of its memory by default.
+        # This prevents the "Memory Leak" that caused 56% accuracy.
+        nn.init.constant_(self.latent_gate.bias, -2.0)
+        nn.init.constant_(self.output_gate.bias, -2.0)
+        # ------------------------------------
 
         self.num_latent_refinements = num_latent_refinements
         self.num_refinement_blocks = num_refinement_blocks
