@@ -27,18 +27,16 @@ class TinyRecursiveModel(Module):
         dim,
         num_tokens,
         network: Module,
-        num_refinement_blocks = 3,   # T in paper
-        num_latent_refinements = 6,  # n in paper
+        num_refinement_blocks = 3,
+        num_latent_refinements = 6,
         halt_loss_weight = 1.,
         num_register_tokens = 0,
         max_seq_len = 1024
     ):
         super().__init__()
-        assert num_refinement_blocks >= 1
+        assert num_refinement_blocks > 1
 
         self.input_embed = nn.Embedding(num_tokens, dim)
-        
-        # 1. Positional Embeddings (Crucial for Logic)
         self.pos_embed = nn.Embedding(max_seq_len, dim)
 
         self.output_init_embed = nn.Parameter(torch.randn(dim) * 1e-2)
@@ -46,19 +44,15 @@ class TinyRecursiveModel(Module):
 
         self.network = network
 
-        # 2. State Normalization (Crucial for Depth)
         self.latent_norm = nn.LayerNorm(dim)
         self.output_norm = nn.LayerNorm(dim)
 
         self.latent_gate = nn.Linear(dim, dim)
         self.output_gate = nn.Linear(dim, dim)
 
-        # --- FIX: NEUTRAL INITIALIZATION (0.0) ---
-        # Bias 0.0 -> Sigmoid(0) = 0.5.
-        # This makes the gate "Neutral". It allows the model to choose 
-        # freely between "Remembering" (Recall) and "Flipping" (Parity).
-        nn.init.constant_(self.latent_gate.bias, 0.0)
-        nn.init.constant_(self.output_gate.bias, 0.0)
+        # Bias gates open (Plasticity)
+        nn.init.constant_(self.latent_gate.bias, 2.0)
+        nn.init.constant_(self.output_gate.bias, 2.0)
 
         self.num_latent_refinements = num_latent_refinements
         self.num_refinement_blocks = num_refinement_blocks
@@ -67,10 +61,10 @@ class TinyRecursiveModel(Module):
 
         self.to_pred = nn.Linear(dim, num_tokens, bias = False)
 
-        self.to_halt_pred = nn.Sequential(
-            nn.Linear(dim, 1, bias = False),
-            nn.Sigmoid()
-        )
+        # --- FIX: REMOVED SIGMOID FOR FP16 STABILITY ---
+        # We output raw logits now, and apply sigmoid only when needed.
+        self.to_halt_pred = nn.Linear(dim, 1, bias = False)
+        # -----------------------------------------------
 
         self.halt_loss_weight = halt_loss_weight
 
@@ -93,24 +87,17 @@ class TinyRecursiveModel(Module):
         return inputs, packed_shape
 
     def refine_latent_then_output_once(self, inputs, outputs, latents):
-        # Latent loop
         for _ in range(self.num_latent_refinements):
             combined = outputs.add(latents).add(inputs)
             normed_combined = self.latent_norm(combined)
             
-            # --- FIX: GATED UPDATE ---
-            # 1. Calculate Candidate Update
             update = self.network(normed_combined)
-            # 2. Calculate Gate (0 = Locked, 1 = Open)
             gate = torch.sigmoid(self.latent_gate(normed_combined))
-            # 3. Smoothly Blend
             latents = (1. - gate) * latents + gate * update
 
-        # Output refinement
         combined_out = outputs.add(latents)
         normed_combined_out = self.output_norm(combined_out)
         
-        # --- FIX: GATED UPDATE ---
         out_update = self.network(normed_combined_out)
         out_gate = torch.sigmoid(self.output_gate(normed_combined_out))
         outputs = (1. - out_gate) * outputs + out_gate * out_update
@@ -149,7 +136,10 @@ class TinyRecursiveModel(Module):
 
             outputs, latents = self.deep_refinement(inputs, outputs, latents)
 
-            halt_prob = self.to_halt_pred(outputs.mean(dim=1)).squeeze(-1)
+            # --- FIX: MANUALLY APPLY SIGMOID FOR INFERENCE ---
+            halt_logits = self.to_halt_pred(outputs.mean(dim=1)).squeeze(-1)
+            halt_prob = halt_logits.sigmoid()
+            # -------------------------------------------------
 
             should_halt = (halt_prob >= halt_prob_thres) | is_last
 
@@ -198,8 +188,10 @@ class TinyRecursiveModel(Module):
         registers, outputs_for_pred = unpack(outputs, packed_shape, 'b * d')
 
         pred = self.to_pred(outputs_for_pred)
-        halt_prob = self.to_halt_pred(outputs.mean(dim=1)).squeeze(-1)
-
+        
+        # --- FIX: KEEP LOGITS FOR LOSS 
+        halt_logits = self.to_halt_pred(outputs.mean(dim=1)).squeeze(-1)
+        halt_prob = halt_logits.sigmoid() 
         return_package = (outputs, latents, pred, halt_prob)
 
         if not exists(labels):
@@ -213,7 +205,9 @@ class TinyRecursiveModel(Module):
         loss = loss.sum(dim=-1) / valid_token_count
 
         is_all_correct = (pred.argmax(dim = -1) == labels).all(dim = -1)
-        halt_loss = F.binary_cross_entropy(halt_prob, is_all_correct.float(), reduction = 'none')
+        
+        # --- FIX: USE STABLE LOSS FOR FP16 ---
+        halt_loss = F.binary_cross_entropy_with_logits(halt_logits, is_all_correct.float(), reduction = 'none')
 
         total_loss = (loss + halt_loss * self.halt_loss_weight)
         losses = (loss, halt_loss)
