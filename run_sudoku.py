@@ -75,16 +75,17 @@ def run_sudoku_benchmark():
     print("--- BENCHMARK: 9x9 SUDOKU ---")
     
     # Load Data
-    train_ds = Sudoku1MDataset(split="train", limit=50000)
+    #train_ds = Sudoku1MDataset(split="train", limit=50000)
+    
+    # Change limit from 50000 to 1000
+    train_ds = Sudoku1MDataset(split="train", limit=1000)
     val_ds = Sudoku1MDataset(split="train", limit=100) 
-
-    # Model Configuration
     model = TinyRecursiveModel(
-        dim = 384,              
-        num_tokens = 10,        # Digits 0-9
+        dim = 256,              
+        num_tokens = 10,
         max_seq_len = 81 + 16,  
         network = MLPMixer1D(
-            dim = 384, 
+            dim = 256,          
             depth = 6,          
             seq_len = 81 
         ),
@@ -96,10 +97,11 @@ def run_sudoku_benchmark():
         model,
         train_ds,
         learning_rate = 1e-3,
-        weight_decay = 0.0,     # Critical: Keep memory
-        batch_size = 64,
+        weight_decay = 0.0,
+        batch_size = 4,        
+        accelerate_kwargs = {"gradient_accumulation_steps": 8}, # 4 * 8 = 32 effective batch size
         epochs = 10,
-        max_recurrent_steps = 32, # 32 steps for hard puzzles
+        max_recurrent_steps = 32,
         warmup_steps = 1000,
         compile_model = False,
         cpu = not torch.cuda.is_available()
